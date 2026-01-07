@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>3D Gravity Universe</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; background: radial-gradient(circle at center, #0a001a, #000); font-family: system-ui, -apple-system, sans-serif; }
+        #webcam { position: fixed; bottom: 15px; left: 15px; width: 180px; border-radius: 12px; transform: scaleX(-1); border: 2px solid rgba(255,255,255,0.2); z-index: 10; }
+        #ui { position: fixed; top: 20px; left: 20px; color: white; z-index: 5; pointer-events: none; text-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+        #ui h2 { margin: 0; font-weight: 700; color: #ff3e6c; text-transform: uppercase; letter-spacing: 2px; font-size: 1.5rem; }
+        #status { color: #00f2ff; font-size: 0.9rem; font-weight: 500; margin: 5px 0; }
+        .hint { color: #ccc; font-size: 0.8rem; line-height: 1.6; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; backdrop-filter: blur(5px); }
+        kbd { background: #444; padding: 2px 5px; border-radius: 4px; color: #fff; font-size: 0.7rem; border: 1px solid #666; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <h2>Gravity Universe</h2>
+    <div id="status">Requesting Camera...</div>
+    <div class="hint">
+        <kbd>H</kbd> Heart | <kbd>B</kbd> Ball | <kbd>S</kbd> Saturn<br>
+        <b>Move Hand:</b> Rotate & Attract<br>
+        <b>Pinch/Open:</b> Zoom & Stabilize
+    </div>
+</div>
+<video id="webcam" autoplay playsinline></video>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+/** 1. THREE.JS SCENE SETUP **/
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.z = 8;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+/** 2. PARTICLES & PHYSICS ENGINE **/
+const COUNT = 10000;
+const geometry = new THREE.BufferGeometry();
+const positions = new Float32Array(COUNT * 3);
+const velocities = new Float32Array(COUNT * 3);
+const targets = new Float32Array(COUNT * 3);
+const colors = new Float32Array(COUNT * 3);
+
+const GRAVITY = -0.006;
+const FRICTION = 0.96;
+const GROUND = -6;
+
+// Initial random scatter
+for(let i=0; i<COUNT; i++){
+    positions[i*3] = (Math.random()-0.5)*15;
+    positions[i*3+1] = (Math.random()-0.5)*15;
+    positions[i*3+2] = (Math.random()-0.5)*10;
+}
+
+geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+const material = new THREE.PointsMaterial({
+    size: 0.045,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.8,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+});
+
+const cloud = new THREE.Points(geometry, material);
+scene.add(cloud);
+
+/** 3. SHAPE ALGORITHMS **/
+function setHeart() {
+    for(let i=0; i<COUNT; i++) {
+        let x, y;
+        do { 
+            x = (Math.random() * 2 - 1) * 1.3; 
+            y = (Math.random() * 2 - 1) * 1.3; 
+        } while (Math.pow(x*x + y*y - 1, 3) - x*x*y*y*y > 0);
+        targets[i*3] = x * 4;
+        targets[i*3+1] = y * 4;
+        targets[i*3+2] = (Math.random() - 0.5) * 2;
+    }
+}
+
+function setBall() {
+    for(let i=0; i<COUNT; i++) {
+        const phi = Math.acos(-1 + (2 * i) / COUNT);
+        const theta = Math.sqrt(COUNT * Math.PI) * phi;
+        targets[i*3] = 4 * Math.cos(theta) * Math.sin(phi);
+        targets[i*3+1] = 4 * Math.sin(theta) * Math.sin(phi);
+        targets[i*3+2] = 4 * Math.cos(phi);
+    }
+}
+
+function setSaturn() {
+    for(let i=0; i<COUNT; i++) {
+        if(i < COUNT * 0.4) { // Planet
+            const phi = Math.acos(-1 + (2 * i) / (COUNT * 0.4));
+            const theta = Math.sqrt((COUNT * 0.4) * Math.PI) * phi;
+            targets[i*3] = 2.2 * Math.cos(theta) * Math.sin(phi);
+            targets[i*3+1] = 2.2 * Math.sin(theta) * Math.sin(phi);
+            targets[i*3+2] = 2.2 * Math.cos(phi);
+        } else { // Rings
+            const a = Math.random() * Math.PI * 2;
+            const r = 4 + Math.random() * 2.5;
+            targets[i*3] = Math.cos(a) * r;
+            targets[i*3+1] = Math.sin(a) * r * 0.25;
+            targets[i*3+2] = Math.sin(a) * r * 0.5;
+        }
+    }
+}
+
+setHeart(); // Start with Heart
+
+/** 4. HAND TRACKING & CAMERA CONTROL **/
+let hx=0, hy=0, pinch=0, handVisible=false;
+let targetRotX=0, targetRotY=0, targetZoom=8;
+
+const video = document.getElementById("webcam");
+const status = document.getElementById("status");
+
+const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+hands.onResults(results => {
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        handVisible = true;
+        const l = results.multiHandLandmarks[0];
+        
+        // Target tracking (Attract)
+        hx = (l[8].x - 0.5) * -15;
+        hy = (l[8].y - 0.5) * -10;
+
+        // Rotation logic (Middle of palm)
+        targetRotY = (l[9].x - 0.5) * 2.5;
+        targetRotX = (l[9].y - 0.5) * 1.5;
+
+        // Zoom logic (Pinch distance)
+        pinch = Math.hypot(l[4].x - l[8].x, l[4].y - l[8].y);
+        targetZoom = 12 - (pinch * 25);
+        targetZoom = Math.max(3, Math.min(16, targetZoom));
+        
+        status.innerText = "Tracking: Zoom " + (pinch < 0.1 ? "Out" : "In");
+    } else {
+        handVisible = false;
+        status.innerText = "Gravity Active (No Hand)";
+    }
+});
+
+const camHelper = new Camera(video, {
+    onFrame: async () => { await hands.send({ image: video }); },
+    width: 640, height: 480
+});
+camHelper.start().then(() => status.innerText = "Camera Ready");
+
+/** 5. INTERACTION & ANIMATION **/
+window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if(k === 'h') setHeart();
+    if(k === 'b') setBall();
+    if(k === 's') setSaturn();
+});
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    // Smooth Camera/Rotation Updates
+    cloud.rotation.x += (targetRotX - cloud.rotation.x) * 0.05;
+    cloud.rotation.y += (targetRotY - cloud.rotation.y) * 0.05;
+    camera.position.z += (targetZoom - camera.position.z) * 0.05;
+
+    const p = geometry.attributes.position.array;
+    const c = geometry.attributes.color.array;
+
+    for(let i=0; i<COUNT; i++){
+        const ix=i*3, iy=i*3+1, iz=i*3+2;
+
+        // Physics Forces
+        velocities[iy] += GRAVITY;
+
+        if(handVisible){
+            // Strength of shape bond increases when pinching
+            const strength = pinch < 0.08 ? 0.025 : 0.006;
+            velocities[ix] += (targets[ix] - p[ix]) * strength;
+            velocities[iy] += (targets[iy] - p[iy]) * strength;
+            velocities[iz] += (targets[iz] - p[iz]) * strength;
+        }
+
+        // Apply velocities
+        p[ix] += velocities[ix];
+        p[iy] += velocities[iy];
+        p[iz] += velocities[iz];
+
+        // Friction/Air resistance
+        velocities[ix] *= FRICTION;
+        velocities[iy] *= FRICTION;
+        velocities[iz] *= FRICTION;
+
+        // Floor Bounce
+        if(p[iy] < GROUND) {
+            p[iy] = GROUND;
+            velocities[iy] *= -0.3;
+        }
+
+        // Dynamic Colors (Pink/Purple base)
+        c[ix] = 0.5 + (pinch * 2); // Red
+        c[iy] = 0.2;               // Green
+        c[iz] = 0.8 - (pinch * 1); // Blue
+    }
+
+    geometry.attributes.position.needsUpdate = true;
+    geometry.attributes.color.needsUpdate = true;
+    renderer.render(scene, camera);
+}
+
+animate();
+
+window.onresize = () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+};
+</script>
+</body>
+</html>
