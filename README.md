@@ -35,17 +35,17 @@ python -m http.server 8000
 ```
 Then open: http://localhost:8000
 
-###Option 2: VS Code
+### Option 2: VS Code
 Use the Live Server extension → Click Go Live.
 
-###🧪 Tech Stack
+### 🧪 Tech Stack
 Three.js – High-performance particle rendering.
 
 MediaPipe Hands – Real-time ML gesture tracking.
 
 Vanilla JavaScript – No frameworks, just trial and error.
 
-###⚠️ Notes
+### ⚠️ Notes
 Browser: Works best in Chrome.
 
 Hardware: Requires webcam permission.
@@ -54,5 +54,5 @@ Environment: Lighting matters! Clearer hand visibility = smoother tracking.
 
 Why I made this: No big goal—I just wanted to move digital particles with my hand and feel like a wizard for 5 minutes. Mission accomplished.
 
-###📜 License
+### 📜 License
 MIT – Do whatever you want with it.
