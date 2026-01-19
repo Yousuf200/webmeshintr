@@ -2,6 +2,9 @@
 
 A fun experiment mixing **hand tracking + Three.js particles** to create interactive shapes controlled by your fingers.
 
+```bash
+https://yousuf200.github.io/webmeshintr/
+```
 I built this just for fun—no deep science, just curiosity about how digital gestures can feel "magical" on screen 😄.
 
 ---
